@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">JarvisAgent</string>
+    <string name="accessibility_desc">Jarvis uses AI to see your screen and execute taps on your behalf.</string>
+</resources>
