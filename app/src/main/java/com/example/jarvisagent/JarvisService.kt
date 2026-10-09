@@ -146,7 +146,7 @@ class JarvisService : AccessibilityService() {
                 """.trimIndent()
 
                 val jsonPayload = """{"contents": [{"parts": [{"text": "${escapeJson(prompt)}"}]}]}"""
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=$apiKey"
                 val body = jsonPayload.toRequestBody("application/json".toMediaType())
                 val request = Request.Builder().url(url).post(body).build()
 
