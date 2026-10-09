@@ -61,17 +61,26 @@ class JarvisService : AccessibilityService() {
         val btnMic = overlayView?.findViewById<Button>(R.id.btnFloatingMic)
         val tvStatus = overlayView?.findViewById<TextView>(R.id.tvMicStatus)
 
-        btnMic?.setOnClickListener {
+                btnMic?.setOnClickListener {
             tvStatus?.text = "Listening..."
             tvStatus?.visibility = View.VISIBLE
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            
+            mainHandler.post {
+                try {
+                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                        // THIS IS THE CRITICAL FIX FOR MODERN ANDROID
+                        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName) 
+                    }
+                    speechRecognizer?.startListening(intent)
+                } catch (e: Exception) {
+                    tvStatus?.visibility = View.GONE
+                    showToast("Mic blocked! Open the Jarvis app to grant permission.")
+                }
             }
-            speechRecognizer?.startListening(intent)
-        }
-        windowManager.addView(overlayView, params)
-    }
+                }
+                
 
     private fun setupSpeech() {
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
