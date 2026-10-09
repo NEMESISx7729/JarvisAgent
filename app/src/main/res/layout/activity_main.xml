@@ -3,65 +3,61 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#000000"
-    android:padding="24dp"
-    android:gravity="center">
+    android:background="#000000">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Jarvis Vision Agent"
-        android:textColor="#FFFFFF"
-        android:textSize="22sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="8dp"/>
-
-    <TextView
-        android:id="@+id/tvStatus"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="🔴 System Offline"
-        android:textColor="#EF4444"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="32dp"/>
-
-    <TextView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Gemini API Key"
-        android:textColor="#888888"
-        android:textSize="12sp"
-        android:layout_marginBottom="4dp"/>
+        android:orientation="horizontal"
+        android:padding="8dp">
+        <Button
+            android:id="@+id/btnSave"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="SAVE CODE"
+            android:backgroundTint="#FFFFFF"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            android:layout_marginEnd="4dp"/>
+        <Button
+            android:id="@+id/btnRun"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="RUN APP"
+            android:backgroundTint="#FFFFFF"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            android:layout_marginStart="4dp"/>
+    </LinearLayout>
 
     <EditText
-        android:id="@+id/etApiKey"
+        android:id="@+id/etCode"
         android:layout_width="match_parent"
-        android:layout_height="50dp"
-        android:background="#1A1A1A"
-        android:hint="Paste your AIza... key here"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#111111"
+        android:textColor="#FFFFFF"
+        android:fontFamily="monospace"
+        android:gravity="top|start"
+        android:padding="12dp"
+        android:hint="&lt;!-- Write HTML/CSS/JS here --&gt;"
         android:textColorHint="#555555"
-        android:textColor="#FFFFFF"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:inputType="textPassword"
-        android:layout_marginBottom="24dp"/>
+        android:inputType="textMultiLine|textNoSuggestions"
+        android:textSize="14sp"/>
 
-    <Button
-        android:id="@+id/btnSaveKey"
+    <View
         android:layout_width="match_parent"
-        android:layout_height="50dp"
-        android:text="Save API Key"
-        android:backgroundTint="#2563EB"
-        android:textColor="#FFFFFF"
-        android:layout_marginBottom="16dp"/>
+        android:layout_height="2dp"
+        android:background="#FFFFFF"/>
 
-    <Button
-        android:id="@+id/btnSettings"
+    <!-- The Sandbox -->
+    <WebView
+        android:id="@+id/webView"
         android:layout_width="match_parent"
-        android:layout_height="50dp"
-        android:text="Enable in Settings"
-        android:backgroundTint="#EF4444"
-        android:textColor="#FFFFFF"/>
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#000000"/>
 
 </LinearLayout>
