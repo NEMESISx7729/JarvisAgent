@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -22,6 +23,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import com.google.gson.JsonParser
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -45,7 +47,6 @@ class JarvisService : AccessibilityService() {
         isServiceRunning = true
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         setupOverlay()
-        setupSpeech()
     }
 
     private fun setupOverlay() {
@@ -59,58 +60,81 @@ class JarvisService : AccessibilityService() {
         ).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END }
 
         val btnMic = overlayView?.findViewById<Button>(R.id.btnFloatingMic)
-        val tvStatus = overlayView?.findViewById<TextView>(R.id.tvMicStatus)
-
+        
         btnMic?.setOnClickListener {
-            tvStatus?.text = "Listening..."
-            tvStatus?.visibility = View.VISIBLE
-            
-            mainHandler.post {
-                try {
-                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-                        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName) // The Mic Fix
-                    }
-                    speechRecognizer?.startListening(intent)
-                } catch (e: Exception) {
-                    tvStatus?.visibility = View.GONE
-                    showToast("Mic blocked! Open the Jarvis app to grant permission.")
-                }
-            }
+            startListening()
         }
         windowManager.addView(overlayView, params)
     }
 
-    private fun setupSpeech() {
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-            override fun onError(error: Int) {
-                overlayView?.findViewById<TextView>(R.id.tvMicStatus)?.visibility = View.GONE
-                showToast("Mic Error: $error")
-            }
-            override fun onResults(results: Bundle?) {
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!matches.isNullOrEmpty()) {
-                    val command = matches[0]
-                    overlayView?.findViewById<TextView>(R.id.tvMicStatus)?.text = "Thinking..."
-                    processVoiceCommand(command)
+    private fun startListening() {
+        val tvStatus = overlayView?.findViewById<TextView>(R.id.tvMicStatus)
+        
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            showToast("Mic permission missing! Open Jarvis app to grant it.")
+            return
+        }
+
+        tvStatus?.text = "Waking up Mic..."
+        tvStatus?.visibility = View.VISIBLE
+
+        mainHandler.post {
+            // Destroy the old instance so it never gets stuck
+            speechRecognizer?.destroy()
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            
+            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) { tvStatus?.text = "Listening..." }
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() { tvStatus?.text = "Thinking..." }
+                override fun onError(error: Int) {
+                    tvStatus?.visibility = View.GONE
+                    val errorMsg = when(error) {
+                        SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Permission denied"
+                        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network issue"
+                        SpeechRecognizer.ERROR_NO_MATCH -> "Didn't catch that"
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Mic is busy"
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected"
+                        else -> "Error code: $error"
+                    }
+                    showToast(errorMsg)
                 }
+                override fun onResults(results: Bundle?) {
+                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    if (!matches.isNullOrEmpty()) {
+                        tvStatus?.text = "Thinking..."
+                        processVoiceCommand(matches[0])
+                    } else {
+                        tvStatus?.visibility = View.GONE
+                        showToast("Didn't catch that")
+                    }
+                }
+                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+
+            try {
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                    putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+                }
+                speechRecognizer?.startListening(intent)
+            } catch (e: Exception) {
+                tvStatus?.visibility = View.GONE
+                showToast("System blocked the mic.")
             }
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
+        }
     }
 
     private fun processVoiceCommand(command: String) {
         val rootNode = rootInActiveWindow
         if (rootNode == null) {
             showToast("Cannot read screen.")
+            overlayView?.findViewById<TextView>(R.id.tvMicStatus)?.visibility = View.GONE
             return
         }
 
@@ -119,6 +143,7 @@ class JarvisService : AccessibilityService() {
         
         if (clickableNodes.isEmpty()) {
             showToast("No buttons found.")
+            overlayView?.findViewById<TextView>(R.id.tvMicStatus)?.visibility = View.GONE
             return
         }
 
@@ -154,7 +179,6 @@ class JarvisService : AccessibilityService() {
                 """.trimIndent()
 
                 val jsonPayload = """{"contents": [{"parts": [{"text": "${escapeJson(prompt)}"}]}]}"""
-                // The Lite server fix
                 val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=$apiKey"
                 val body = jsonPayload.toRequestBody("application/json".toMediaType())
                 val request = Request.Builder().url(url).post(body).build()
@@ -177,6 +201,7 @@ class JarvisService : AccessibilityService() {
                 }
             } catch (e: Exception) {
                 showToast("Error parsing API")
+                mainHandler.post { overlayView?.findViewById<TextView>(R.id.tvMicStatus)?.visibility = View.GONE }
             }
         }.start()
     }
