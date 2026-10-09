@@ -1,19 +1,13 @@
 package com.example.jarvisagent
 
-import android.Manifest
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
-import android.provider.Settings
-import android.view.View
+import android.webkit.WebChromeClient
+import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
-import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -21,45 +15,35 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Request Microphone Permission
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
+        val etCode = findViewById<EditText>(R.id.etCode)
+        val btnSave = findViewById<Button>(R.id.btnSave)
+        val btnRun = findViewById<Button>(R.id.btnRun)
+        val webView = findViewById<WebView>(R.id.webView)
+
+        // Configure the Sandbox
+        webView.settings.javaScriptEnabled = true
+        webView.settings.domStorageEnabled = true
+        webView.webChromeClient = WebChromeClient() 
+        webView.setBackgroundColor(0x000000) 
+
+        // Load saved code
+        val sharedPrefs = getSharedPreferences("CodeSandboxPrefs", Context.MODE_PRIVATE)
+        val defaultCode = "<html>\n<body style=\"color:white; font-family:sans-serif; text-align:center; margin-top:50px;\">\n  <h1>System Online</h1>\n  <button onclick=\"alert('Sandbox is working!')\">Test JavaScript</button>\n</body>\n</html>"
+        val savedCode = sharedPrefs.getString("SAVED_CODE", defaultCode)
+        etCode.setText(savedCode)
+
+        // Run code on startup
+        webView.loadDataWithBaseURL(null, savedCode!!, "text/html", "utf-8", null)
+
+        btnSave.setOnClickListener {
+            val currentCode = etCode.text.toString()
+            sharedPrefs.edit().putString("SAVED_CODE", currentCode).apply()
+            Toast.makeText(this, "Code Saved", Toast.LENGTH_SHORT).show()
         }
 
-        val etApiKey = findViewById<EditText>(R.id.etApiKey)
-        val btnSaveKey = findViewById<Button>(R.id.btnSaveKey)
-        val btnSettings = findViewById<Button>(R.id.btnSettings)
-        
-        val sharedPrefs = getSharedPreferences("JarvisPrefs", Context.MODE_PRIVATE)
-        val savedKey = sharedPrefs.getString("GEMINI_API_KEY", "")
-        if (!savedKey.isNullOrEmpty()) etApiKey.setText(savedKey)
-
-        btnSaveKey.setOnClickListener {
-            val key = etApiKey.text.toString().trim()
-            if (key.isNotEmpty()) {
-                sharedPrefs.edit().putString("GEMINI_API_KEY", key).apply()
-                Toast.makeText(this, "Key Saved!", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        btnSettings.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        val tvStatus = findViewById<TextView>(R.id.tvStatus)
-        val btnSettings = findViewById<Button>(R.id.btnSettings)
-
-        if (JarvisService.isServiceRunning) {
-            tvStatus.text = "🟢 Voice Agent Online"
-            tvStatus.setTextColor(0xFF22C55E.toInt())
-            btnSettings.visibility = View.GONE
-        } else {
-            tvStatus.text = "🔴 Agent Offline"
-            tvStatus.setTextColor(0xFFEF4444.toInt())
-            btnSettings.visibility = View.VISIBLE
+        btnRun.setOnClickListener {
+            val codeToRun = etCode.text.toString()
+            webView.loadDataWithBaseURL(null, codeToRun, "text/html", "utf-8", null)
         }
     }
 }
