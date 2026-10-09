@@ -61,7 +61,7 @@ class JarvisService : AccessibilityService() {
         val btnMic = overlayView?.findViewById<Button>(R.id.btnFloatingMic)
         val tvStatus = overlayView?.findViewById<TextView>(R.id.tvMicStatus)
 
-                btnMic?.setOnClickListener {
+        btnMic?.setOnClickListener {
             tvStatus?.text = "Listening..."
             tvStatus?.visibility = View.VISIBLE
             
@@ -70,8 +70,7 @@ class JarvisService : AccessibilityService() {
                     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                         putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-                        // THIS IS THE CRITICAL FIX FOR MODERN ANDROID
-                        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName) 
+                        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName) // The Mic Fix
                     }
                     speechRecognizer?.startListening(intent)
                 } catch (e: Exception) {
@@ -79,8 +78,9 @@ class JarvisService : AccessibilityService() {
                     showToast("Mic blocked! Open the Jarvis app to grant permission.")
                 }
             }
-                }
-                
+        }
+        windowManager.addView(overlayView, params)
+    }
 
     private fun setupSpeech() {
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
@@ -129,7 +129,6 @@ class JarvisService : AccessibilityService() {
         if (node == null) return
         val text = node.text?.toString() ?: node.contentDescription?.toString()
         
-        // Find everything on screen that is clickable
         if (node.isClickable && !text.isNullOrEmpty()) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
@@ -155,6 +154,7 @@ class JarvisService : AccessibilityService() {
                 """.trimIndent()
 
                 val jsonPayload = """{"contents": [{"parts": [{"text": "${escapeJson(prompt)}"}]}]}"""
+                // The Lite server fix
                 val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=$apiKey"
                 val body = jsonPayload.toRequestBody("application/json".toMediaType())
                 val request = Request.Builder().url(url).post(body).build()
