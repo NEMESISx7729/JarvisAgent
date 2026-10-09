@@ -2,285 +2,189 @@ package com.example.jarvisagent
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.PixelFormat
-import android.os.Build
+import android.graphics.Rect
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
-import android.view.Display
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.view.Gravity
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.view.inputmethod.InputMethodManager
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
-import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
-import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.ByteArrayOutputStream
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class JarvisService : AccessibilityService() {
 
-    companion object {
-        var isServiceRunning = false
-    }
-
+    companion object { var isServiceRunning = false }
+    
     private lateinit var windowManager: WindowManager
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
-
     private var overlayView: View? = null
-    private var overlayParams: WindowManager.LayoutParams? = null
+    private var speechRecognizer: SpeechRecognizer? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val httpClient = OkHttpClient.Builder().readTimeout(15, TimeUnit.SECONDS).build()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         isServiceRunning = true
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        setupFloatingHUD()
+        setupOverlay()
+        setupSpeech()
     }
 
-    @SuppressLint("InflateParams", "ClickableViewAccessibility")
-    private fun setupFloatingHUD() {
-        if (overlayView != null) return
-
-        overlayView = LayoutInflater.from(this).inflate(R.layout.layout_jarvis_overlay, null)
-
-        overlayParams = WindowManager.LayoutParams(
+    private fun setupOverlay() {
+        overlayView = LayoutInflater.from(this).inflate(R.layout.layout_voice_jarvis, null)
+        val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.CENTER_VERTICAL or Gravity.END
-        }
+        ).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END }
 
-        val tab = overlayView?.findViewById<View>(R.id.overlayTab)
-        val console = overlayView?.findViewById<View>(R.id.overlayConsole)
-        val etCommand = overlayView?.findViewById<EditText>(R.id.etAgentCommand)
-        val btnRun = overlayView?.findViewById<Button>(R.id.btnRunAgent)
-        val btnClose = overlayView?.findViewById<Button>(R.id.btnCloseOverlay)
-        val tvStatus = overlayView?.findViewById<TextView>(R.id.tvAgentStatus)
+        val btnMic = overlayView?.findViewById<Button>(R.id.btnFloatingMic)
+        val tvStatus = overlayView?.findViewById<TextView>(R.id.tvMicStatus)
 
-        tab?.setOnClickListener {
-            tab.visibility = View.GONE
-            console?.visibility = View.VISIBLE
-        }
-
-        btnClose?.setOnClickListener {
-            setConsoleFocusable(false)
-            console?.visibility = View.GONE
-            tab?.visibility = View.VISIBLE
-        }
-
-        // Tap input to trigger keyboard
-        etCommand?.setOnTouchListener { v, event ->
-            if (event.action == MotionEvent.ACTION_UP) {
-                setConsoleFocusable(true)
-                v.postDelayed({
-                    v.requestFocus()
-                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                    imm?.showSoftInput(v, InputMethodManager.SHOW_IMPLICIT)
-                }, 100)
+        btnMic?.setOnClickListener {
+            tvStatus?.text = "Listening..."
+            tvStatus?.visibility = View.VISIBLE
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
             }
-            false
+            speechRecognizer?.startListening(intent)
         }
-
-        btnRun?.setOnClickListener {
-            val task = etCommand?.text?.toString()?.trim().orEmpty()
-            if (task.isEmpty()) return@setOnClickListener
-
-            setConsoleFocusable(false)
-            console?.visibility = View.GONE
-            tab?.visibility = View.VISIBLE
-
-            tvStatus?.text = "ANALYZING SCREEN..."
-            captureScreenAndAnalyze(task)
-        }
-
-        windowManager.addView(overlayView, overlayParams)
+        windowManager.addView(overlayView, params)
     }
 
-    private fun setConsoleFocusable(focusable: Boolean) {
-        val params = overlayParams ?: return
-        if (focusable) {
-            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
-        } else {
-            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.hideSoftInputFromWindow(overlayView?.windowToken, 0)
-        }
-        windowManager.updateViewLayout(overlayView, params)
-    }
-
-    // --- STEP 1: CAPTURE SCREEN SILENTLY ---
-    private fun captureScreenAndAnalyze(task: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            takeScreenshot(
-                Display.DEFAULT_DISPLAY,
-                applicationContext.mainExecutor,
-                object : TakeScreenshotCallback {
-                    override fun onSuccess(screenshotResult: ScreenshotResult) {
-                        val hardwareBuffer = screenshotResult.hardwareBuffer
-                        val colorSpace = screenshotResult.colorSpace
-                        val bitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
-                            ?.copy(Bitmap.Config.ARGB_8888, false)
-                        hardwareBuffer.close()
-
-                        if (bitmap != null) {
-                            sendToGemini(bitmap, task)
-                        } else {
-                            showToast("Screenshot buffer conversion failed")
-                        }
-                    }
-
-                    override fun onFailure(errorCode: Int) {
-                        showToast("Screen capture failed: Error $errorCode")
-                    }
+    private fun setupSpeech() {
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) {
+                overlayView?.findViewById<TextView>(R.id.tvMicStatus)?.visibility = View.GONE
+                showToast("Mic Error: $error")
+            }
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    val command = matches[0]
+                    overlayView?.findViewById<TextView>(R.id.tvMicStatus)?.text = "Thinking..."
+                    processVoiceCommand(command)
                 }
-            )
-        } else {
-            showToast("Automated vision requires Android 11 or higher.")
-        }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
     }
 
-    // --- STEP 2: SEND SCREENSHOT TO GEMINI VISION API ---
-    private fun sendToGemini(bitmap: Bitmap, task: String) {
-        val sharedPrefs = getSharedPreferences("JarvisPrefs", Context.MODE_PRIVATE)
-        val apiKey = sharedPrefs.getString("GEMINI_API_KEY", "")
-
-        if (apiKey.isNullOrEmpty()) {
-            showToast("Missing Gemini API Key! Save it in MainActivity.")
+    private fun processVoiceCommand(command: String) {
+        val rootNode = rootInActiveWindow
+        if (rootNode == null) {
+            showToast("Cannot read screen.")
             return
         }
 
+        val clickableNodes = mutableListOf<String>()
+        extractClickableNodes(rootNode, clickableNodes)
+        
+        if (clickableNodes.isEmpty()) {
+            showToast("No buttons found.")
+            return
+        }
+
+        askGeminiWhereToTap(command, clickableNodes.joinToString("\n"))
+    }
+
+    private fun extractClickableNodes(node: AccessibilityNodeInfo?, list: MutableList<String>) {
+        if (node == null) return
+        val text = node.text?.toString() ?: node.contentDescription?.toString()
+        
+        // Find everything on screen that is clickable
+        if (node.isClickable && !text.isNullOrEmpty()) {
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            list.add("'$text' at X:${rect.centerX()}, Y:${rect.centerY()}")
+        }
+        for (i in 0 until node.childCount) {
+            extractClickableNodes(node.getChild(i), list)
+        }
+    }
+
+    private fun askGeminiWhereToTap(command: String, elements: String) {
+        val sharedPrefs = getSharedPreferences("JarvisPrefs", Context.MODE_PRIVATE)
+        val apiKey = sharedPrefs.getString("GEMINI_API_KEY", "") ?: return
+
         Thread {
             try {
-                val stream = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
-                val base64Image = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-                val screenWidth = bitmap.width
-                val screenHeight = bitmap.height
-
                 val prompt = """
-                    You are an Android UI touch agent.
-                    Screen dimensions: width=$screenWidth, height=$screenHeight.
-                    User wants to: "$task".
-                    Look at this screenshot and determine where the user needs to tap to accomplish this task.
-                    Return ONLY a raw JSON object with this exact structure:
-                    {"x": 540, "y": 1200, "action": "click"}
-                    If no tap is possible or needed, return:
-                    {"action": "none"}
+                    You are a phone automation agent. User said: "$command".
+                    Here are the buttons on the screen:
+                    $elements
+                    Return ONLY a JSON object with the coordinates of the button to click: {"x": 500, "y": 800}. 
+                    If nothing matches, return {"x": 0, "y": 0}.
                 """.trimIndent()
 
-                val jsonPayload = """
-                    {
-                      "contents": [{
-                        "parts": [
-                          {"text": ${escapeJson(prompt)}},
-                          {
-                            "inline_data": {
-                              "mime_type": "image/jpeg",
-                              "data": "$base64Image"
-                            }
-                          }
-                        ]
-                      }]
-                    }
-                """.trimIndent()
-
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=$apiKey"
-                val body = jsonPayload.toRequestBody("application/json; charset=utf-8".toMediaType())
+                val jsonPayload = """{"contents": [{"parts": [{"text": "${escapeJson(prompt)}"}]}]}"""
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
+                val body = jsonPayload.toRequestBody("application/json".toMediaType())
                 val request = Request.Builder().url(url).post(body).build()
 
                 val response = httpClient.newCall(request).execute()
-                val responseBody = response.body?.string().orEmpty()
+                val responseData = response.body?.string() ?: ""
 
                 if (response.isSuccessful) {
-                    parseGeminiResponseAndTap(responseBody)
+                    val cleanJson = responseData.substringAfter("{").substringBeforeLast("}")
+                    val json = JsonParser.parseString("{$cleanJson}").asJsonObject
+                    val x = json.get("x").asFloat
+                    val y = json.get("y").asFloat
+                    
+                    mainHandler.post {
+                        overlayView?.findViewById<TextView>(R.id.tvMicStatus)?.visibility = View.GONE
+                        if (x > 0 && y > 0) performTap(x, y) else showToast("Button not found")
+                    }
                 } else {
-                    showToast("Gemini Error: ${response.code}")
+                    showToast("API Error ${response.code}")
                 }
             } catch (e: Exception) {
-                showToast("Request failed: ${e.localizedMessage}")
+                showToast("Error parsing API")
             }
         }.start()
     }
 
-    // --- STEP 3: PARSE JSON & TAP ---
-    private fun parseGeminiResponseAndTap(responseBody: String) {
-        try {
-            val root = JsonParser.parseString(responseBody).asJsonObject
-            val candidates = root.getAsJsonArray("candidates")
-            val text = candidates[0].asJsonObject
-                .getAsJsonObject("content")
-                .getAsJsonArray("parts")[0].asJsonObject
-                .get("text").asString
-
-            val cleanJson = text.substringAfter("{").substringBeforeLast("}")
-            val jsonObject = JsonParser.parseString("{$cleanJson}").asJsonObject
-
-            val action = jsonObject.get("action")?.asString ?: "none"
-            if (action == "click") {
-                val tapX = jsonObject.get("x").asFloat
-                val tapY = jsonObject.get("y").asFloat
-                mainHandler.post {
-                    performTap(tapX, tapY)
-                }
-            } else {
-                showToast("Agent completed or cannot find button.")
-            }
-        } catch (e: Exception) {
-            showToast("Failed to parse AI coordinates.")
-        }
-    }
-
-    // --- STEP 4: PHYSICAL TAP DISPATCH ---
     private fun performTap(x: Float, y: Float) {
         val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 100)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-
-        dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(gestureDescription: GestureDescription?) {
-                showToast("Tapped at ($x, $y)")
-            }
-            override fun onCancelled(gestureDescription: GestureDescription?) {
-                showToast("Tap cancelled")
-            }
-        }, null)
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 100)).build()
+        dispatchGesture(gesture, null, null)
     }
 
-    private fun escapeJson(str: String): String {
-        return JsonParser.parseString("\"" + str.replace("\"", "\\\"").replace("\n", "\\n") + "\"").toString()
-    }
-
-    private fun showToast(msg: String) {
-        mainHandler.post {
-            Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
-        }
-    }
+    private fun escapeJson(str: String) = str.replace("\"", "\\\"").replace("\n", "\\n")
+    private fun showToast(msg: String) = mainHandler.post { Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show() }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
-
+    
     override fun onUnbind(intent: Intent?): Boolean {
         isServiceRunning = false
         overlayView?.let { windowManager.removeView(it) }
