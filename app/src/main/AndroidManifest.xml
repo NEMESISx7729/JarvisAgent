@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Internet for Gemini API & Accessibility for Screen Control -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" /> <!-- NEW -->
 
     <application
         android:allowBackup="true"
@@ -13,7 +13,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
 
-        <!-- The Visual Control Panel -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -23,7 +22,6 @@
             </intent-filter>
         </activity>
 
-        <!-- The Background Brain (Eyes & Hands) -->
         <service
             android:name=".JarvisService"
             android:exported="true"
